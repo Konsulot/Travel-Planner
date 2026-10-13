@@ -16,7 +16,7 @@ client = OpenAI(
 MODEL = os.getenv("OPENAI_MODEL")
 
 WORKSPACE = (Path(__file__).parent / "workspace").resolve()
-MAX_STEPS = 10
+MAX_STEPS = 2
 
 # данные проектных инструментов (бюджет и расходы поездки)
 TRAVEL_FILE = WORKSPACE / "travel.json"
