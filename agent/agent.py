@@ -22,7 +22,10 @@ SYSTEM_PROMPT = (
     "Ты агент проекта Travel Planner. Отвечай кратко, по-русски. "
     "Ты работаешь только с файлами внутри workspace. "
     "Не придумывай содержимое файлов: чтобы узнать, какие файлы есть, "
-    "вызывай list_files, чтобы прочитать файл, вызывай read_file."
+    "вызывай list_files, чтобы прочитать файл, вызывай read_file. "
+    "Чтобы создать или изменить файл, вызывай write_file — "
+    "пользователь должен подтвердить запись. Если запись отклонена, "
+    "не пытайся записать снова без новой просьбы пользователя."
 )
 
 
@@ -50,6 +53,18 @@ def read_file(path):
     return full.read_text(encoding="utf-8")
 
 
+def write_file(path, content):
+    full = safe_path(path)
+    print(f"\n  Агент хочет записать файл: {path} ({len(content)} символов)")
+    print("  " + content[:300].replace("\n", "\n  "))
+    answer = input("  Разрешить? [y/N] ")
+    if answer.strip().lower() != "y":
+        return "ОТКАЗ: пользователь запретил запись файла."
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(content, encoding="utf-8")
+    return f"Файл '{path}' записан ({len(content)} символов)."
+
+
 TOOLS = [
     {
         "type": "function",
@@ -75,11 +90,31 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Создаёт или полностью перезаписывает текстовый файл в workspace. "
+                           "Вызывай, когда пользователь просит создать или изменить файл. "
+                           "Перед записью пользователь подтверждает действие.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string",
+                             "description": "Путь относительно workspace, например TODO.md"},
+                    "content": {"type": "string",
+                                "description": "Полное новое содержимое файла"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
 ]
 
 FUNCTIONS = {
     "list_files": list_files,
     "read_file": read_file,
+    "write_file": write_file,
 }
 
 
@@ -137,7 +172,7 @@ def run_agent(messages):
         for call in msg.tool_calls:
             name = call.function.name
             raw_args = call.function.arguments
-            print(f"  -> {name}({raw_args})")
+            print(f"  -> {name}({raw_args[:200]})")
 
             result = execute_tool(name, raw_args)
             print(f"  <- {result[:200]}")
