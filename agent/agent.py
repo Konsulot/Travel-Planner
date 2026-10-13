@@ -18,6 +18,10 @@ MODEL = os.getenv("OPENAI_MODEL")
 WORKSPACE = (Path(__file__).parent / "workspace").resolve()
 MAX_STEPS = 10
 
+# данные проектных инструментов (бюджет и расходы поездки)
+TRAVEL_FILE = WORKSPACE / "travel.json"
+CATEGORIES = ["еда", "транспорт", "жильё", "билеты", "покупки", "другое"]
+
 SYSTEM_PROMPT = (
     "Ты агент проекта Travel Planner. Отвечай кратко, по-русски. "
     "Ты работаешь только с файлами внутри workspace. "
@@ -25,7 +29,10 @@ SYSTEM_PROMPT = (
     "вызывай list_files, чтобы прочитать файл, вызывай read_file. "
     "Чтобы создать или изменить файл, вызывай write_file — "
     "пользователь должен подтвердить запись. Если запись отклонена, "
-    "не пытайся записать снова без новой просьбы пользователя."
+    "не пытайся записать снова без новой просьбы пользователя. "
+    "Для учёта расходов поездки используй add_expense, set_budget "
+    "и budget_status. Суммы — в рублях. Не считай остаток сам, "
+    "всегда вызывай budget_status."
 )
 
 
@@ -63,6 +70,69 @@ def write_file(path, content):
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
     return f"Файл '{path}' записан ({len(content)} символов)."
+
+
+# ---------- проектные инструменты Travel Planner ----------
+
+def load_travel():
+    """Читает travel.json; если файла нет — возвращает пустую поездку."""
+    if TRAVEL_FILE.exists():
+        return json.loads(TRAVEL_FILE.read_text(encoding="utf-8"))
+    return {"budget": 0, "expenses": []}
+
+
+def save_travel(data):
+    TRAVEL_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+
+
+def set_budget(amount):
+    amount = float(amount)
+    if amount <= 0:
+        raise ValueError("бюджет должен быть больше 0")
+    data = load_travel()
+    data["budget"] = amount
+    save_travel(data)
+    return f"Бюджет поездки: {amount:.0f} руб."
+
+
+def add_expense(amount, category, note=""):
+    amount = float(amount)
+    if amount <= 0:
+        raise ValueError("сумма расхода должна быть больше 0")
+    if category not in CATEGORIES:
+        raise ValueError(f"неизвестная категория '{category}', "
+                         f"допустимые: {', '.join(CATEGORIES)}")
+    data = load_travel()
+    data["expenses"].append({"amount": amount, "category": category, "note": note})
+    save_travel(data)
+    return f"Добавлен расход {amount:.0f} руб. ({category}{', ' + note if note else ''})."
+
+
+def budget_status(category=None):
+    data = load_travel()
+    expenses = data["expenses"]
+    if category:
+        if category not in CATEGORIES:
+            raise ValueError(f"неизвестная категория '{category}'")
+        total = sum(e["amount"] for e in expenses if e["category"] == category)
+        return f"Потрачено на «{category}»: {total:.0f} руб."
+
+    by_cat = {}
+    for e in expenses:
+        by_cat[e["category"]] = by_cat.get(e["category"], 0) + e["amount"]
+    spent = sum(by_cat.values())
+    lines = [f"{c}: {s:.0f}" for c, s in sorted(by_cat.items(), key=lambda x: -x[1])]
+    result = f"Потрачено {spent:.0f} руб. ({'; '.join(lines) or 'расходов нет'})."
+    if data["budget"]:
+        left = data["budget"] - spent
+        result += (f" Бюджет {data['budget']:.0f}, осталось {left:.0f} "
+                   f"({spent / data['budget'] * 100:.0f}% использовано).")
+        if left < 0:
+            result += " ПЕРЕРАСХОД!"
+    else:
+        result += " Бюджет не задан."
+    return result
 
 
 TOOLS = [
@@ -109,12 +179,66 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_budget",
+            "description": "Задаёт общий бюджет поездки в рублях. "
+                           "Вызывай, когда пользователь называет бюджет.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {"type": "number", "description": "Бюджет в рублях, больше 0"},
+                },
+                "required": ["amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_expense",
+            "description": "Добавляет один расход поездки. Вызывай для каждой траты, "
+                           "которую называет пользователь (несколько трат — несколько вызовов).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {"type": "number", "description": "Сумма в рублях, больше 0"},
+                    "category": {"type": "string", "enum": CATEGORIES,
+                                 "description": "Категория расхода"},
+                    "note": {"type": "string",
+                             "description": "Короткое описание, например «кофе» или «такси в аэропорт»"},
+                },
+                "required": ["amount", "category"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "budget_status",
+            "description": "Показывает, сколько потрачено (всего и по категориям) и сколько "
+                           "осталось от бюджета. Вызывай, когда спрашивают про траты, "
+                           "остаток или перерасход.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "enum": CATEGORIES,
+                                 "description": "Если указана — сумма только по этой категории"},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 FUNCTIONS = {
     "list_files": list_files,
     "read_file": read_file,
     "write_file": write_file,
+    "set_budget": set_budget,
+    "add_expense": add_expense,
+    "budget_status": budget_status,
 }
 
 
