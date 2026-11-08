@@ -1,7 +1,7 @@
 *.iml
 .gradle/
 /local.properties
-/.idea/
+.idea/
 .DS_Store
 /build/
 /app/build/
@@ -11,4 +11,12 @@
 *.apk
 *.aab
 .env
-agent/workspace/
+# Лаб. 3: песочница агента. Рабочие файлы агента (travel.json, TODO.md…) не коммитим,
+# а корпус документов для search_docs и копию README — коммитим.
+agent/workspace/*
+!agent/workspace/README.md
+!agent/workspace/docs/
+
+# Лаб. 3: сохранённые диалоги — личные данные, в отчёт идут только фрагменты логов
+agent/sessions/*.json
+__pycache__/
